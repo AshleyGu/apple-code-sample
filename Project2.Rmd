@@ -1,0 +1,663 @@
+---
+title: "Project#2"
+author: "me"
+date: "4/23/2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Project 2
+
+##Introduction
+
+The dataset comes from the Bike Sharing Demand competition in Kaggle. The goal of the project is to fit a linear regression equation to the total count of bikes rented during a particular hour in terms of the available explanatory variables for the training data (train.csv) and then to use this regression equation to predict the counts for the test dataset.
+
+
+##1. Data Loading
+
+```{r}
+#reading csv files
+
+train = read.csv("train.csv", header = T)
+test = read.csv("test.csv" ,header = T)
+
+```
+
+In the original dataset, the time is given in terms of year-date-hour, it would be more helpful if we could group them by different time periods of the day and make it a categorical varaible.
+
+Besides hours, the year and month are also provided by first colum. The effect of month on total counts of rental per hour could be captured by the "season" variable. So I decided to only make the additional "time of day" and "year" column. 
+
+The hour of day may be a very important factor of total rental count because of people's prefered time of traveling, rush hour and etc. So I decided to plot a graph visualizing the count of total rental each hour to see how I should segment a day into several periods.
+
+
+
+```{r}
+#create an empty list of integers to hold the counts per hour
+
+
+#this is a function to aggregate the counts per hour, "grepl" is a function in r that checks matching pattern
+segment.func = function(x){
+  count_by_hour = vector(mode = "integer", length = 24)
+  for (i in c(1:nrow(train))){
+    for (n in c(0:9)) {
+      string_time = paste("0", toString(n), ":00:00", sep = "")
+      
+      if (grepl(string_time, train$datetime[i])) {
+        count_by_hour[n+1] = count_by_hour[n+1] + train$count[i] 
+      }
+    }
+    for (n in c(10:23)) {
+      string_time = paste(toString(n), ":00:00", sep = "")
+      if (grepl(string_time, train$datetime[i])) {
+        count_by_hour[n+1] = count_by_hour[n+1] + train$count[i] 
+      }
+    }
+  }
+  return(count_by_hour)
+}
+
+count_by_hour = segment.func(as.character(train$datetime))
+summary(count_by_hour)
+barplot(count_by_hour, main = "total bike rental count by hour", xlab = "Hour", ylab = "Bike Rental Count", names.arg = c(0:23))
+
+```
+The barplot above is the sum of all bike rental in the dataset by hour. 
+
+According to this barplot, we can see that from 0 - 6am, the count is very low. The count from 7am to 7pm is on the same level besides the rush hours (8am, 5pm,6pm). Then the count decreases from 8pm to 11pm. Therefore, I decided to group the hours into the following categories:
+
+group1(sleep) 0-6
+group2(work) 7, 9-16, 19
+group3(afterwork) 20-23
+group4(traffic) 8, 17, 18
+
+```{r}
+#create a seperate variable called "time" which includes sleep, work, afterwork, traffic
+
+time_list = c()
+
+
+#this function detects whether a certain hourly time shows up in the datetime column and group them into different periods of the day
+time.func = function(x){
+  for (i in x){
+    if (grepl("00:00:00",i) |grepl("01:00:00",i) |grepl("02:00:00",i)|grepl("03:00:00",i)|grepl("04:00:00",i)|grepl("05:00:00",i) |grepl("06:00:00",i)) {
+      list = c(list,"sleep")
+    }
+    
+    if (grepl("07:00:00",i) |grepl("09:00:00",i) |grepl("10:00:00",i)|grepl("11:00:00",i)|grepl("12:00:00",i)|grepl("13:00:00",i)|grepl("14:00:00",i)|grepl("15:00:00",i)|grepl("16:00:00",i)|grepl("19:00:00",i)) {
+      list = c(list,"work")
+    }
+    
+    if (grepl("20:00:00",i) |grepl("21:00:00",i) |grepl("22:00:00",i)|grepl("23:00:00",i)) {
+      list = c(list,"afterwork")
+    }
+    
+    if (grepl("08:00:00",i) |grepl("17:00:00",i) |grepl("18:00:00",i)) {
+      list = c(list,"traffic")
+    }
+  }
+  return(list)
+}
+
+#add the time_list into the train table and name it as "time"
+time_list = time.func(as.character(train$datetime))
+train$time = unlist(time_list[2:10887])
+head(train)
+
+
+```
+
+##2. Exploratory Data Analysis
+
+
+###Pairs Scattered Plots
+```{r}
+library(gpairs)
+gpairs(train[,-c(1,2,3,4,5,13)])
+
+
+```
+
+From the pairs plots above, we can see that the temp and atemp has a strong positive correlation and we might want to use only one of these two variables for our prediction. 
+
+Also, we can see that the correlation between registered counts and total counts is stronger than the correlation between casual counts and total counts. We might want to investigate these two variables more to determine whether we want to predict them separately or together.
+
+As we can see in the scattered plots above, there are too many data points and the scattered plot just turnded out to be a huge blurb providing us very few information. Thus, I am going to plot 2D density smoothing plots to see where do most data points line.
+
+###2D Density Smooth Plots
+```{r}
+#create a smoothing plot function that loops over all pairs plots between "count" and other continous variables. 
+
+scatter.func = function(){
+  for (i in c(6,7,8,9,10,11)) {
+    x.lab = names(train)[i]
+    smoothScatter(x = train[, x.lab], y = train$count, xlab = x.lab, ylab = "count")
+    loess = loess.smooth(x = train[, x.lab], y = train$count)
+    lines(loess,lwd = 1.5)
+      
+  }
+}
+
+par(mfrow = c(2,3))
+scatter.func()
+
+
+```
+
+Now, after plotting out the 2D density plots and add the loess smoothing curve on top, we have a much better idea of the relationship of these variables. As we can see from the plots, temp, atemp, casual and registered all have a positive relationship with count. Humidity has a negative relationship with count, which is reasonable. The loess line between windspeed and count is almost flat, which indicates that changes in windspeed doesn't really change the bike rental. Therefore, we could conclude that there is only a very weak relationship between windspeed and bike rental counts. 
+
+###Histograms
+
+Besides all these continuous variables above, we still haven't investigated the relationships between categorical variables. I am going to include some histograms below to further explore these relationships.
+
+```{r}
+
+hist.func = function(){
+  for (i in c(3,4,5)) {
+    lab = names(train)[i]
+    hist(x = train[, lab], xlab= lab, main = c("Historgram of", lab))
+  }
+}
+
+
+#frequency of season doesn't tell us anything.The following function allows us to compute the count of rental by season.
+season.func = function(){
+  list_of_season = vector("integer", length = 4)
+  for (i in c(1:nrow(train))) {
+    for (n in c(1:4)) {
+      if (train$season[i] == n) {
+        list_of_season[n] = list_of_season[n] + train$count[i]
+    }
+    }
+  }
+  return(list_of_season)
+}
+
+par(mfrow = c(2,2))
+list_of_season = season.func()
+barplot(list_of_season, xlab = "season", ylab = "count", main = "Histogram of season", ylim = c(0,700000))
+hist.func()
+
+
+```
+As we can see from the histograms above, the bike rental counts is evenly distributed across summer, fall and winter with nearly half of hourly rent in spring. The data is recorded from Jan 2011 to Dec 2012 so every season appears equal amount of times. 
+
+There are more bikes being rented on workingday and most bikes are rented on weather 1 (Clear, Few clouds, Partly cloudy, Partly cloudy). 
+
+##3. Choice of Response in Regression
+
+I make the choice based on whether casual users and registered users show different renting patterns, if so, then it would be more accurate for us to fit a linear regression for each group.
+
+We can find out through visualization. As we can see the in the pairs plot at the very beginning. "casual VS temp" pair plot is noticeably different from "registered VS temp" pair plot. I would like to draw a 2D density plot and fit a loess curve to better visualize the differences.
+
+```{r}
+par(mfrow = c(1,2))
+
+smoothScatter(x = train$temp, y = train$casual, ylim = c(0,1000), xlim = c(0,45), xlab = "temp", ylab = "casual", main = "temp VS casual")
+loess.casual = loess.smooth(x = train$temp, y = train$casual)
+lines(loess.casual, lwd = 1.5)
+
+smoothScatter(x = train$temp, y = train$registered, ylim = c(0,1000),xlim = c(0,45), xlab = "temp", ylab = "registered", main = "temp VS registered")
+loess.registered = loess.smooth(x = train$temp, y = train$registered)
+lines(loess.registered, lwd = 1.5)
+```
+
+As we can see from the comparison above, the casual bikers are very different from the registered bikers when they react to temperature changes. Registered bikers are more sensitive to temperature changes than casual bikers. Therefore, to better predict the bike rental count, we should keep them separate and make two linear regressions. 
+
+Also, from the plot aove, we can see that the majority of data is located in low values, thus, it would be a good idea for us to take the log of counts to better fit the linear regression. 
+
+##4. Regression Analysis
+
+
+###Basic Linear Regression Model
+```{r}
+
+# create a "time" variable for test data as well
+
+time_list_test = time.func(as.character(test$datetime))
+test$time = unlist(time_list_test[2:6494])
+
+```
+
+Here, I am going to first combine weather3(light rain) and weather4 (heavy rain& snow) before I run any linear regression because there's only one data point for weather4 = 1 and if I add the interaction term between weather4 and other variables, singularity issues will occur when we add interaction term later on. 
+
+
+```{r}
+#predict using casual.lm and registered.lm. 
+
+#combine weather 3 and 4 by changing the row that contains weather = 4 into weather = 3
+
+train$weather[5632] = 3
+
+#because I need to take the log of both casual and registered bikers, I need to take out the rows where casual bikers = 0 and registered bikers = 0.
+
+train_nonzero = train[train$casual != 0 & train$registered != 0, ]
+
+
+# I create my own test dataset of size 200, and put the rest as training data
+sample_num = sample(c(1:nrow(train_nonzero)), 200)
+my_test = train[sample_num,]
+my_train_casual = train[-sample_num,-c(11,12)]
+my_train_registered = train[-sample_num, -c(10,12)]
+
+
+# now I fit a linear regression model for casual bikers and registered bikers separetely, my_test is excluded from the training data
+casual.lm = lm(log(casual + 1) ~ as.factor(season) + as.factor(holiday) + as.factor(workingday) + as.factor(weather) + temp + atemp + humidity  + as.factor(time), data = my_train_casual)
+
+print("summaries for causual.lm")
+summary(casual.lm)
+
+registered.lm = lm(log(registered + 1) ~ as.factor(season) + as.factor(holiday) + as.factor(workingday) + as.factor(weather) + temp + atemp + humidity + windspeed + as.factor(time), data = my_train_registered)
+
+print("summaries for registered.lm")
+summary(registered.lm)
+
+#fit a linear regression model without separating casual and registered bikers
+total.lm = lm(log(count + 1) ~ as.factor(season) + as.factor(holiday) + as.factor(workingday) + as.factor(weather) + temp + atemp + humidity + as.factor(time), data = train[-sample_num, -c(10,11)])
+
+print("summaries for total.lm")
+summary(total.lm)
+
+```
+I created two very basic linear regression models above. From the summaries above, we can see that, overall, our models separating casual and registered bikers (R^2 = 0.7603, 0.6901) perform better than our model not separating the group (R^2 = 0.7139).
+
+Now I am going to explore some interactions between different variables and pick the best model before I use step function and cross validation to further select my variables. 
+
+I am going to first incluse the interactions between numerical and categorical variables, if the RSS decreases significantly, I will continue to include interactions between all numericals & numericals and catrgorical & categorical. If not, I am going to stop and start variable selection.
+
+
+###Explore the interactions between different explanatory variables
+
+
+####Include interactions between numerical & categorical
+```{r}
+casual.lm.numcat = lm(log(casual + 1) ~ as.factor(season) + as.factor(holiday) + as.factor(workingday) + as.factor(weather) + temp + atemp + humidity + as.factor(time) + as.factor(season):temp + as.factor(season):humidity + as.factor(season):atemp +
+as.factor(holiday):temp + as.factor(holiday):humidity + as.factor(holiday):atemp +
+as.factor(workingday):temp + as.factor(workingday):humidity + as.factor(workingday):atemp +
+as.factor(weather):temp + as.factor(weather):humidity + as.factor(weather):atemp +
+as.factor(time):temp + as.factor(time):humidity + as.factor(time):atemp
+  , data = my_train_casual)
+
+summary(casual.lm.numcat)
+
+
+
+```
+From the summaries above, we can see that for our very basic model without any interactions (causual.lm), the multiple r square is 0.7602. After adding all interactions between numerical and categorical variables, the multiple r square becomes 0.7869. 
+
+
+Now I am going to do the same thing for registered bikers. 
+
+```{r}
+registered.lm.numcat = lm(log(registered+1) ~ as.factor(season) + as.factor(holiday) + as.factor(workingday) + as.factor(weather) + temp + atemp + humidity + as.factor(time) + as.factor(season):temp + as.factor(season):humidity + as.factor(season):atemp +
+as.factor(holiday):temp + as.factor(holiday):humidity + as.factor(holiday):atemp +
+as.factor(workingday):temp + as.factor(workingday):humidity +  as.factor(workingday):atemp +
+as.factor(time):temp + as.factor(time):humidity + as.factor(time):atemp , data = my_train_registered)
+
+
+summary(registered.lm.numcat)
+
+
+```
+
+From the summaries above, we can see that for our very basic model without any interactions (registered.lm), the multiple r square is 0.6901. After adding all interactions between numerical and categorical variables, the multiple r square becomes 0.6993. Adding interaction terms does not improve model that much.
+
+By comparing the p-values of every explanatory variables in registered.lm.numcat with p-values of casual.lm.numcat, we can see a few differences between registered bikers and casual bikers:* 
+* registered bikers are less sensitive to whether the day is a working day or not
+* registered bikers are less sensitive to change in atemp("feels like" temperature in Celsius)
+* registered bikers are less sensitive to time (sleep, work, traffic, afterwork)
+
+This explains why adding the interaction terms for some categorical variables above doesn't improve R square that much.
+
+###Predict on test data and compare RSS
+To see the effect of adding interaction on our prediction. I am going to predict the hourly bike rental counts using both models and compare the RSS.
+
+```{r}
+predicted.casual.numcat = predict(casual.lm.numcat, newdata = my_test[-c(10,11,12)])
+predicted.registered.numcat = predict(registered.lm.numcat, newdata = my_test[-c(10,11,12)])
+predicted.sum.numcat = predicted.casual.numcat + predicted.registered.numcat
+true.value = log(my_test$count)
+RSS.1 = sum((true.value-predicted.sum.numcat)^2)
+
+
+
+RSS.1
+
+predicted.casual = predict(casual.lm, newdata = my_test[,-c(10,11,12)])
+predicted.registered= predict(registered.lm, newdata = my_test[,-c(10,11,12)])
+predicted.sum = predicted.casual + predicted.registered
+RSS = sum((true.value-predicted.sum)^2)
+
+RSS
+
+(RSS.1 - RSS)/RSS
+```
+
+As we can see from the RSS values above. The RSS decreases 1% after I include all interaction terms, which means that adding interaction terms doesn't really help that much.
+
+Therefore, I decided to revert back to the original/simpler model without the numerical & categorical interactions. Now I am going to include the interactions between categorical &categorical variables and see if that will improve the model.
+
+####Include interactions between categorical & categorical
+```{r}
+casual.lm.catcat = lm(log(casual + 1) ~ as.factor(season) + as.factor(holiday) + as.factor(workingday) + as.factor(weather) + temp + atemp + humidity  + as.factor(time) + as.factor(season):as.factor(holiday) + as.factor(season):as.factor(workingday) + as.factor(season):as.factor(weather) + as.factor(season):as.factor(time) + as.factor(holiday):as.factor(workingday) + as.factor(holiday):as.factor(weather) + as.factor(holiday):as.factor(time) + as.factor(workingday):as.factor(weather) + as.factor(workingday):as.factor(time) + as.factor(weather):as.factor(time), data = my_train_casual)
+
+print("summary of casual.lm.catcat")
+summary(casual.lm.catcat)
+
+registered.lm.catcat = lm(log(registered + 1) ~ as.factor(season) + as.factor(holiday) + as.factor(workingday) + as.factor(weather) + temp + atemp + humidity  + as.factor(time) + as.factor(season):as.factor(holiday) + as.factor(season):as.factor(workingday) + as.factor(season):as.factor(weather) + as.factor(season):as.factor(time) + as.factor(holiday):as.factor(workingday) + as.factor(holiday):as.factor(weather) + as.factor(holiday):as.factor(time) + as.factor(workingday):as.factor(weather) + as.factor(workingday):as.factor(time) + as.factor(weather):as.factor(time), data = my_train_registered)
+print("summary of registered.lm.catcat")
+summary(registered.lm.catcat)
+```
+
+If we compare the multiple R square of the categorical & categorical interaction with numerical & categorical interaction. We will notice that for casual bikers, adding num&cat interaction improves multiple R square a lot and for registered bikers, adding cat&cat interaction improves multiple R square a lot.
+
+In the following section, I am going to use casual.numcat and registered.catcat to predict the total count of bike rental.
+
+###Predict on test data and compare RSS
+```{r}
+predicted.registered.catcat = predict.lm(registered.lm.catcat, newdata = my_test[,-c(10,11,12)])
+predicted.sum.combined = predicted.casual.numcat + predicted.registered.catcat
+true.value = log(my_test$count)
+RSS.2 = sum((true.value-predicted.sum.combined)^2)
+
+
+
+RSS.2
+
+
+(RSS.2 - RSS)/RSS
+```
+
+As we can see from above, combining two types of interaction does slightly more improvement than adding a single type of interaction between numerical and categoricla variables each time. Now I would like to conduct variable selection on the models I generate above.
+
+##5. Variable Selection
+
+For variable selection, we could either use stepwise selection or cross validation. I prefer the latter one because you select your model entirely based on it's performance. Whereas for stepwise selection, you select based on p-values, which might not be as intuitive and as relavant to our problem.
+
+```{r}
+casual.lm.short <- step(casual.lm, direction = "both")
+
+registered.lm.short <-  step(registered.lm, direction = "both")
+
+length(coef(casual.lm.short))
+```
+
+
+```{r}
+summary(casual.lm.short)
+
+casual.test = lm(log(casual + 1) ~ temp:as.factor(time) +as.factor(workingday):atemp+as.factor(workingday):humidity+as.factor(season):atemp +as.factor(season):windspeed + as.factor(season):temp + humidity:as.factor(time) + as.factor(season):humidity , data = train[-sample_num, -c(11, 12)])
+```
+
+```{r}
+summary(casual.test)
+```
+
+
+
+```{r}
+
+predicted.casual.short = predict.lm(casual.lm.short, newdata = my_test[,-c(10,11,12)])
+predicted.registered.short = predict.lm(registered.lm.short, newdata = my_test[,-c(10,11,12)])
+predicted.sum.short = predicted.casual.short + predicted.registered.short
+true.value = log(my_test$count)
+RSS.short = sum((true.value-predicted.sum.short)^2)
+
+
+
+RSS.short
+RSS.1
+
+
+(RSS.short - RSS.1)/RSS.1
+
+
+```
+As shown in the comparison above, after I decrease the number of parameters through step function, the RSS of the prediction doesn't change much. Therefore, I will use the shorter version of the regression equation.
+
+666===========================================================================================
+
+Before using cross validation, we want to first pick the best model (that minimizes RSS) for every arbitrary of variables from 1 - 8. Since RSS is biased, RSS will always decrease when the number of explanatory varaible increases. 
+
+Therefore, for example, to compare model A (with 5 variables) with model B (with 6 variables), we use cross validation, which selects the model with lowest RSS during "leave one out" prediction process.
+
+
+```{r}
+#For each value of k = 1, . . . , p, regsubset gives the best model with k variables according to the residual sum of squares.
+#install.packages("leaps")
+library(leaps)
+subset_casual = regsubsets(log(casual + 1) ~ season + holiday + workingday + weather + temp + atemp + humidity  + time, data = my_train_casual, nvmax = 14)
+summary(subset_casual)$which
+
+
+```
+The TF matrix above records the best selection of variables for number of variables from k = 1 to k = 10. 
+
+The matrix is reasonable because we can see that it is consistent with what we have found previously:
+
+* whether it is sleeping hours or not makes a huge difference
+* whether it is working day or not is more imporstant than whether it is holiday or not for casual bikers
+* atemp is valued more than temp, they're essensially measuring the same thing, so temp is duplicate
+
+We then generate 10 different models based on the matix above, run cross validation on each of these models and pick the one with smallest residual sum of squares. For the accuracy of prdiction, we only consider models that have more than 2 variables.
+
+```{r}
+#apply cross validation to models for casual bikers with 5 - 31 variables
+#to make my cross validation more representative of the training dataset, I randomly sample 500 as my test set for cross validation
+sample_num_cv = sample(c(1:nrow(train_nonzero)), 5000)
+my_test_casual = train[sample_num_cv,-c(11,12)]
+my_test_registered = train[sample_num_cv, -c(10,12)]
+
+cross.validate3 = function() {
+  pred_val = vector("integer", length = nrow(my_test))
+  for (i in c(1: nrow(my_test))) {
+    lin_model = lm(log(casual + 1) ~ as.factor(workingday) + atemp + as.factor(time), data = my_test_casual[-i,])
+    pred_val[i] = predict(lin_model, my_test_casual[i, c("workingday", "atemp", "time")])
+  }
+  return(pred_val)
+}
+
+cross.validate4 = function() {
+  pred_val = vector("integer", length = nrow(my_test))
+  for (i in c(1: nrow(my_test))) {
+    lin_model = lm(log(casual + 1) ~ as.factor(workingday) + atemp + humidity + as.factor(time), data = my_test_casual[-i,])
+    pred_val[i] = predict(lin_model, my_test_casual[i, c("workingday", "atemp", "time", "humidity")])
+  }
+  return(pred_val)
+}
+
+cross.validate5 = function() {
+  pred_val = vector("integer", length = nrow(my_test))
+  for (i in c(1: nrow(my_test))) {
+    lin_model = lm(log(casual + 1) ~ as.factor(workingday) + atemp + humidity + as.factor(time) + as.factor(season), data = my_test_casual[-i,])
+    pred_val[i] = predict(lin_model, my_test_casual[i, c("workingday", "atemp", "time", "humidity", "season")])
+  }
+  return(pred_val)
+}
+
+cross.validate6 = function() {
+  pred_val = vector("integer", length = nrow(my_test))
+  for (i in c(1: nrow(my_test))) {
+    lin_model = lm(log(casual + 1) ~ as.factor(workingday) + atemp + humidity + as.factor(time) + as.factor(season) + as.factor(weather), data = my_test_casual[-i,])
+    pred_val[i] = predict(lin_model, my_test_casual[i, c("workingday", "atemp", "time", "humidity", "season", "weather")])
+  }
+  return(pred_val)
+}
+
+cross.validate7 = function() {
+  pred_val = vector("integer", length = nrow(my_test))
+  for (i in c(1: nrow(my_test))) {
+    lin_model = lm(log(casual + 1) ~ as.factor(workingday) + as.factor(atemp) + humidity + as.factor(time) + as.factor(season) + as.factor(weather) + as.factor(holiday), data = my_test_casual[-i,])
+    pred_val[i] = predict(lin_model, my_test_casual[i, c("workingday", "atemp", "time", "humidity", "season", "weather", "holiday")])
+  }
+  return(pred_val)
+}
+
+cross.validate8 = function() {
+  pred_val = vector("integer", length = nrow(my_test))
+  for (i in c(1: nrow(my_test))) {
+    lin_model = lm(log(casual + 1) ~ as.factor(workingday) + atemp + humidity + as.factor(time) + as.factor(season) + as.factor(weather) + as.factor(holiday) + temp, data = my_test_casual[-i,])
+    pred_val[i] = predict(lin_model, my_test_casual[i, c("workingday", "atemp", "time", "humidity", "season", "weather", "holiday", "temp")])
+  }
+  return(pred_val)
+}
+
+pred3 = cross.validate3()
+rss3 = sum((log((my_test_casual$casual) + 1)-pred3)^2)
+rss3
+pred4 = cross.validate4()
+rss4 = sum((log((my_test_casual$casual) + 1)-pred4)^2)
+rss4
+pred5 = cross.validate5()
+rss5 = sum((log((my_test_casual$casual) + 1)-pred5)^2)
+rss5
+pred6 = cross.validate6()
+rss6 = sum((log((my_test_casual$casual) + 1)-pred6)^2)
+rss6
+pred7 = cross.validate7()
+rss7 = sum((log((my_test_casual$casual) + 1)-pred7)^2)
+rss7
+pred8 = cross.validate8()
+rss8 = sum((log((my_test_casual$casual) + 1)-pred8)^2)
+rss8
+
+```
+
+Same thing for registered bikers
+
+```{r}
+
+subset_registered = regsubsets(log(registered + 1) ~ season + holiday + workingday + weather + temp + atemp + humidity  + time, data = my_train_registered, nvmax = 14)
+summary(subset_registered)$which
+
+
+```
+7777=====================================================================================
+
+```{r}
+#each row of the reulting matrix represents the best combination of variables when num_var = k, where k = 1,...,32. 
+
+regsubset_casual = regsubsets(log(casual + 1) ~ season + holiday + workingday + weather + temp + atemp + humidity + time + season:temp + season:humidity + season:atemp +
+holiday:temp + holiday:humidity + holiday:atemp +
+workingday:temp + workingday:humidity + workingday:atemp +
+weather:temp + weather:humidity + weather:atemp +
+time:temp + time:humidity + time:atemp, data = my_train_casual, nvmax = 40)
+
+TF_matrix = summary(combined_subset_casual)$which
+TF_matrix
+```
+
+
+```{r}
+
+#for "time" factor, we use "timesleep" as the representative factor, therefore delete the "timetraffic" and "timework" related columns out of the matrix.
+TF_matrix = TF_matrix[,-c(10,11,25,26,28,29,31,32)]
+#names of all parameter
+TF_matrix[0,]
+#put names of all parameter into a list, this is the full parameter for our model
+parameter = c("as.factor(season)", "as.factor(holiday)", "as.factor(workingday)", "as.factor(weather)", "temp", "atemp", "humidity", "as.factor(time)", "as.factor(season):temp", "as.factor(season):humidity", "as.factor(season):atemp", "as.factor(holiday):temp", "as.factor(holiday):humidity", "as.factor(holiday):atemp", "as.factor(workingday):temp", "as.factor(workingday):humidity", "as.factor(workingday):atemp", "as.factor(weather):temp", "as.factor(weather):humidity", "as.factor(weather):atemp", "temp:as.factor(time)", "humidity:as.factor(time)", "atemp:as.factor(time)")
+
+#this is a customized function to create a formula out of a list of string paramaters 
+customized.para.func = function(x) {
+  para = ""
+  for (i in c(1:length(x))) {
+    para = paste(para,x[i], sep = " + ")
+  }
+  return (substr(para, 3, 1000))
+}
+
+#
+
+test_para = customized.para.func(parameter)
+paste("log(casual+1) ~", test_para)
+test_lm = lm(paste("log(casual+1) ~", test_para), data = my_train_casual)
+summary(test_lm)
+
+
+
+```
+
+##6. Regression Diagnostics
+
+```{r}
+
+par(mfrow = c(2,2))
+plot(casual.lm.short)
+
+
+```
+
+```{r}
+
+par(mfrow = c(2,2))
+plot(registered.lm.short)
+
+
+```
+
+
+From the regression diagnostic plots shown above. We could see that generally, the assumptions are satisfied.
+
+For both casual.lm.short and registered.lm.short, the linearity assumptions holds true because the Residual vs Fitted plot shows a horizontal line, which means that the fitted values does not have a linear realtionship with residuals. From the Normal QQ plots of casual.lm.short and registered.lm.short, we see that the distribution of residuals are generally normal with slightly heavier tail at the ends. The homoscedasticity assumption is slightly violated since for both casual.lm.short and registered.lm.short, the variance of residual decreases as fitted values increases. 
+
+##7. Predictions
+
+As I mentioned above, I combined weather4 into weather3 in my training dataset. To make sure I correctly predict the test data, I am going to combine weather4 into weather3 in my test.csv correspondingly.
+
+```{r}
+modify.func = function(){
+  for (i in c(1: nrow(test))) {
+    if ( test$weather[i] == 4) {
+      return(i)
+    }
+  }
+}
+
+modify.func()
+
+```
+
+```{r}
+test$weather[155] = 3
+modify.func()
+
+```
+
+```{r}
+test$weather[3249] = 3
+sum(test$weather == 4)
+```
+Now I make sure that all weather4 has been included as weather3.
+
+
+
+```{r}
+predict.log.casual =  predict(casual.lm.short, newdata = test) 
+predict.log.registered =  predict(registered.lm.short, newdata = test) 
+predict.norm.casual = expm1(predict.log.casual) 
+predict.norm.registered = expm1(predict.log.registered) 
+predict.norm.count = predict.norm.casual + predict.norm.registered
+
+
+predict.test.1 = data.frame(datetime = test$datetime, count = predict.norm.count)
+ncol(predict.test.1)
+
+
+View(predict.test.1)
+write.csv(predict.test.1, file = "prediction submission.csv", row.names = F)
+
+
+```
+
+
+
+##8.Comparison
+
+
+After submitting the results in kaggle, I got a error of 0.77, which is relatively high. I checked my prediction, it seems to be overall higher than the training dataset, I think it might be because the intercept is too high. Some methods that I could use to improve my prediction is that I could to reduce some insignificant categorical variables and run anova test. I could also fit a quadratic model to see whether it's a better fit. Using cross validation might also be a better way to reduce varaibles then stepwise function given more powerful platforms and more time. 
+
+
+
+
