@@ -285,7 +285,7 @@ summary(casual.lm.numcat)
 
 
 ```
-From the summaries above, we can see that for our very basic model without any interactions (causual.lm), the multiple r square is 0.7602. After adding all interactions between numerical and categorical variables, the multiple r square becomes 0.7869. 
+From the summaries above, we can see that for our very basic model without any interactions (causual.lm), the multiple r square is 0.7602. After adding all interactions between numerical and categorical variables, the multiple r square becomes 0.7869. This is a reletively noticable improvement. 
 
 
 Now I am going to do the same thing for registered bikers. 
@@ -309,35 +309,40 @@ By comparing the p-values of every explanatory variables in registered.lm.numcat
 * registered bikers are less sensitive to change in atemp("feels like" temperature in Celsius)
 * registered bikers are less sensitive to time (sleep, work, traffic, afterwork)
 
-This explains why adding the interaction terms for some categorical variables above doesn't improve R square that much.
+This explains why adding the interaction terms for some categorical variables above doesn't improve R square of registered bikers that much.
+
+Also notice that there are way more significant terms on casual.numcat than in registered.numcat, this also explains why adding interaction isn't neccessary for registered bikers. This also furthur validates the differences in how these two groups of people rent bikes.
+
+So up to this point, I only evaluate the model based on the multiple R squared. In the following section, I am going to predict the count using my own test data and see whether there's improvement in prediction after the modification of model.
 
 ###Predict on test data and compare RSS
-To see the effect of adding interaction on our prediction. I am going to predict the hourly bike rental counts using both models and compare the RSS.
+To see the effect of adding interaction on our prediction. I am going to predict the hourly bike rental counts using both modifided model and the basic model and then compare their RSS.
 
 ```{r}
-predicted.casual.numcat = predict(casual.lm.numcat, newdata = my_test[-c(10,11,12)])
-predicted.registered.numcat = predict(registered.lm.numcat, newdata = my_test[-c(10,11,12)])
+predicted.casual.numcat = exp(predict(casual.lm.numcat, newdata = my_test[-c(10,11,12)]) -1)
+predicted.casual.numcat
+predicted.registered.numcat = exp(predict(registered.lm.numcat, newdata = my_test[-c(10,11,12)]) -1)
+predicted.registered.numcat
 predicted.sum.numcat = predicted.casual.numcat + predicted.registered.numcat
-true.value = log(my_test$count)
-RSS.1 = sum((true.value-predicted.sum.numcat)^2)
+true.value = my_test$count
+true.value-predicted.sum.numcat
+RSS.numcat = sum((true.value-predicted.sum.numcat)^2)
 
+RSS.numcat
 
-
-RSS.1
-
-predicted.casual = predict(casual.lm, newdata = my_test[,-c(10,11,12)])
-predicted.registered= predict(registered.lm, newdata = my_test[,-c(10,11,12)])
+predicted.casual = exp(predict(casual.lm, newdata = my_test[,-c(10,11,12)]) - 1)
+predicted.registered= exp(predict(registered.lm, newdata = my_test[,-c(10,11,12)]) - 1)
 predicted.sum = predicted.casual + predicted.registered
 RSS = sum((true.value-predicted.sum)^2)
 
 RSS
 
-(RSS.1 - RSS)/RSS
+(RSS.numcat - RSS)/RSS
 ```
 
-As we can see from the RSS values above. The RSS decreases 1% after I include all interaction terms, which means that adding interaction terms doesn't really help that much.
+As we can see from the RSS values above. The RSS decreases around 1.6% after I include all interaction terms, which means that adding interaction terms doesn't really help that much. However, we do notice some improvements in nultiple R squared and the number of significant terms for casual bikers. 
 
-Therefore, I decided to revert back to the original/simpler model without the numerical & categorical interactions. Now I am going to include the interactions between categorical &categorical variables and see if that will improve the model.
+I decided to revert back to the basic model and include the interactions between categorical &categorical variables and see if that will gives us more insights about the casual or registered bikers.
 
 ####Include interactions between categorical & categorical
 ```{r}
@@ -351,15 +356,16 @@ print("summary of registered.lm.catcat")
 summary(registered.lm.catcat)
 ```
 
-If we compare the multiple R square of the categorical & categorical interaction with numerical & categorical interaction. We will notice that for casual bikers, adding num&cat interaction improves multiple R square a lot and for registered bikers, adding cat&cat interaction improves multiple R square a lot.
+If we compare the multiple R square of the categorical & categorical interaction with numerical & categorical interaction. We will notice that for casual bikers, adding num&cat interaction improves multiple R square and for registered bikers, adding cat&cat interaction improves multiple R square noticably.
 
 In the following section, I am going to use casual.numcat and registered.catcat to predict the total count of bike rental.
 
 ###Predict on test data and compare RSS
 ```{r}
-predicted.registered.catcat = predict.lm(registered.lm.catcat, newdata = my_test[,-c(10,11,12)])
+predicted.registered.catcat = exp(predict.lm(registered.lm.catcat, newdata = my_test[,-c(10,11,12)]) - 1)
 predicted.sum.combined = predicted.casual.numcat + predicted.registered.catcat
-true.value = log(my_test$count)
+true.value = my_test$count
+
 RSS.2 = sum((true.value-predicted.sum.combined)^2)
 
 
@@ -370,7 +376,7 @@ RSS.2
 (RSS.2 - RSS)/RSS
 ```
 
-As we can see from above, combining two types of interaction does slightly more improvement than adding a single type of interaction between numerical and categoricla variables each time. Now I would like to conduct variable selection on the models I generate above.
+The RSS decreases by 3.5% for the 
 
 ##5. Variable Selection
 
@@ -545,17 +551,20 @@ workingday:temp + workingday:humidity + workingday:atemp +
 weather:temp + weather:humidity + weather:atemp +
 time:temp + time:humidity + time:atemp, data = my_train_casual, nvmax = 40)
 
-TF_matrix = summary(combined_subset_casual)$which
+TF_matrix = summary(regsubset_casual)$which
 TF_matrix
 ```
 
 
 ```{r}
 
-#for "time" factor, we use "timesleep" as the representative factor, therefore delete the "timetraffic" and "timework" related columns out of the matrix.
-TF_matrix = TF_matrix[,-c(10,11,25,26,28,29,31,32)]
+#for "time" factor, we use "timesleep" as the representative factor, therefore delete the "timetraffic" and "timework" related columns out of the matrix. 
+TF_matrix = TF_matrix[,-c(1,10,11,25,26,28,29,31,32)]
 #names of all parameter
 TF_matrix[0,]
+```
+
+```{r}
 #put names of all parameter into a list, this is the full parameter for our model
 parameter = c("as.factor(season)", "as.factor(holiday)", "as.factor(workingday)", "as.factor(weather)", "temp", "atemp", "humidity", "as.factor(time)", "as.factor(season):temp", "as.factor(season):humidity", "as.factor(season):atemp", "as.factor(holiday):temp", "as.factor(holiday):humidity", "as.factor(holiday):atemp", "as.factor(workingday):temp", "as.factor(workingday):humidity", "as.factor(workingday):atemp", "as.factor(weather):temp", "as.factor(weather):humidity", "as.factor(weather):atemp", "temp:as.factor(time)", "humidity:as.factor(time)", "atemp:as.factor(time)")
 
@@ -563,22 +572,75 @@ parameter = c("as.factor(season)", "as.factor(holiday)", "as.factor(workingday)"
 customized.para.func = function(x) {
   para = ""
   for (i in c(1:length(x))) {
+    print("enter loop")
     para = paste(para,x[i], sep = " + ")
   }
   return (substr(para, 3, 1000))
 }
-
-#
-
+#an example use og this function
 test_para = customized.para.func(parameter)
 paste("log(casual+1) ~", test_para)
 test_lm = lm(paste("log(casual+1) ~", test_para), data = my_train_casual)
-summary(test_lm)
+print("RSS of model")
+sum((summary(test_lm))$residuals ^2)
+```
 
+
+```{r}
+#this is a function that maps each row of the TF matrix to parameter and fit the linear model accordingly
+nrow(TF_matrix)
+TF_matrix[1,]
+hahahah = c(1:17)
+tf = c(T,T,F,F)
+hahahah[tf]
+tff = as.vector(TF_matrix[1,], mode = "logical")
+hahahah
+hhhh = as.list(hahahah[tff])
+
+filter.func = function(matrix, para, train){
+  matrix = matrix
+  para = as.vector(para, mode = "character")
+  list_of_rsquare = c(1:32)
+  list_of_rss = c(1:32)
+  for (i in c(5:nrow(matrix))) {
+    filt_standard = as.vector(TF_matrix[i,], mode = "logical")
+    filtered = para[filt_standard]
+    formula = paste("log(casual+1) ~", customized.para.func(as.list(filtered)))
+    lin_mod= lm(formula, data = my_train_casual)
+    list_of_rsquare[i] = (summary(lin_mod))$r.squared
+    rss = sum((summary(lin_mod))$residuals^2)
+    list_of_rss[i] = rss
+  }
+  return (c(list_of_rsquare, list_of_rss))
+}
+
+filter.func(TF_matrix, parameter, my_train_casual)
+
+#this is a function that maps each row of the TF matrix to parameter, fit the linear model and gives out the multiple r^2 as well as cross validation error of each model
+cross.validate3 = function() {
+  pred_val = vector("integer", length = nrow(my_test))
+  for (i in c(1: nrow(my_test))) {
+    lin_model = lm(log(casual + 1) ~ as.factor(workingday) + atemp + as.factor(time), data = my_test_casual[-i,])
+    pred_val[i] = predict(lin_model, my_test_casual[i, c("workingday", "atemp", "time")])
+  }
+  return(pred_val)
+}
+
+cv.func = function(train,formula,para) {
+  pred_val = vector("integer", length = nrow(train))
+  for (i in c(1:nrow(train))) {
+    print("enter loop")
+    lin_model = lm(formula, data = train[-i,])
+    pred_val[i] = predict(lin_model, train[i, para])
+  }
+  print(pred_val)
+  rss = sum((log((train$casual) + 1)-pred_val)^2)
+  return(rss)
+}
 
 
 ```
-
+888888888====================================================================================
 ##6. Regression Diagnostics
 
 ```{r}
